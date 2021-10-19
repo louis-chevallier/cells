@@ -42,4 +42,5 @@ cell :
 
 
 
-
+submit :
+	kg submit <submission-file> -u <username> -p <password> -c <competition> -m "<message>"

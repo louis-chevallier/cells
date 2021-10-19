@@ -56,7 +56,7 @@ function buildtheenv() {
         pip install torchsummary
         pip install albumentations 
         pip install torchscan
-
+        pip install kaggle-cli
 
      fi
     #cuda92
