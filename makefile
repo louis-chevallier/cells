@@ -19,28 +19,34 @@ $(warning FACELABREPO=$(FACELABREPO))
 FACELAB_LOG_LEVEL?=INFO
 export DATA_FOLDER?=/home/wp24b
 
-GGPU?=0
+GGPU?=0,1
+DEBUG=False
+MODEL?=deeplab
 
 
 
-start : start0
+startD : 
+	ssh -X -q D9466.Idcc.lab -l chevallierl "cd $$PWD; DEBUG=False MODEL=deeplab make start1"
 
-start0 :
-	ssh -X -q D9466.Idcc.lab -l chevallierl "cd $$PWD; make start1"
+start : 
+	ssh -X -q D9468.Idcc.lab -l chevallierl "cd $$PWD; DEBUG=True MODEL=unet make start1"
 
-TARGET=lmm
+TARGET=cell
 
 start1 :
 	hostname
-	-source ~/.bashrc; spy;  hostname; buildthenenv; MINEKOLEVEL=0 PYTHONPATH=$(GIT)/utils:$(GIT) CVD=$(GGPU) CUDA_VISIBLE_DEVICES=$(GGPU) make $(TARGET)
+	-source ~/.bashrc; spy;  source buildenv.sh ; hostname; buildtheenv; MINEKOLEVEL=0 PYTHONPATH=$(GIT)/utils:$(GIT) CVD=$(GGPU) CUDA_VISIBLE_DEVICES=$(GGPU) make $(TARGET)
 
 
 PREF=$(PWD)/../../validation/grand_test/facelab2
 
-cell :
-	CVD=$(GGPU) CUDA_VISIBLE_DEVICES=$(GGPU)  $(SET) python cell.py 
+cell : kill
+	hostname
+	CVD=$(GGPU) CUDA_VISIBLE_DEVICES=$(GGPU)  $(SET) python cell13.py --debug $(DEBUG) --pts $(DATE).pts --model $(MODEL) 2>&1 | tee $(@)_$(DATE).trc
 
+kill :
+	-source ~/.bashrc; spy; terminate train_face_seg; sleep 5 
 
 
 submit :
-	kg submit <submission-file> -u <username> -p <password> -c <competition> -m "<message>"
+	kg submit submission__unet_0009.csv -u lmdm99 -p <password> -c <competition> -m "<message>"

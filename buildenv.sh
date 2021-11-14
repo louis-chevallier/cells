@@ -41,9 +41,13 @@ function buildtheenv() {
         conda install -y matplotlib
         pip install loguru
         pip install scikit-image face-alignment h5py
-        conda install -y cloudpickle  cycler  dask  decorator  imageio  kiwisolver  matplotlib  networkx  numpy  pandas  Pillow  pycparser  pygit  pyparsing  python-dateutil  pytz  PyWavelets  PyYAML  scikit-image  scikit-learn  scipy  six  toolz imageio-ffmpeg  tqdm pandas sympy         
+        conda install -y cloudpickle  cycler  dask  decorator  imageio  kiwisolver  matplotlib  networkx  numpy  
+        conda install -y pandas  Pillow  pycparser  pygit  pyparsing  python-dateutil  pytz  PyWavelets  
+        conda install -y PyYAML  scikit-image  scikit-learn  scipy  six  toolz imageio-ffmpeg  tqdm  sympy         
         pip install tensorboard pycocotools
 
+
+        conda install -y -c pytorch torchvision
         #conda install -y -c conda-forge opencv
         pip install opencv-python
         pip install chumpy
@@ -57,6 +61,7 @@ function buildtheenv() {
         pip install albumentations 
         pip install torchscan
         pip install kaggle-cli
+        pip install git+https://github.com/kornia/kornia
 
      fi
     #cuda92
