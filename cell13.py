@@ -41,6 +41,7 @@ import pandas as pd # data processing, CSV file I/O (e.g. pd.read_csv)
 
 print("hello")
 from functools import partial
+import itertools
 import os
 import cv2
 import pdb
@@ -61,11 +62,14 @@ from torch.utils.data import DataLoader, Dataset, sampler
 from matplotlib import pyplot as plt
 from albumentations import (HorizontalFlip, VerticalFlip, ShiftScaleRotate, Normalize, Resize, Compose, GaussNoise)
 from albumentations.pytorch import ToTensorV2
-#import kornia
+import kornia
 #import canny
 from torch import autograd
 warnings.filterwarnings("ignore")
-
+import skimage
+import numpy as np
+import pandas as pd
+import skimage.segmentation
 
 def fix_all_seeds(seed):
     np.random.seed(seed)
@@ -76,6 +80,8 @@ def fix_all_seeds(seed):
     torch.cuda.manual_seed_all(seed)
     
 fix_all_seeds(2021)
+
+tz = torch.tensor(0.)
 
 """
 # %% [code] {"jupyter":{"outputs_hidden":false},"execution":{"iopub.status.busy":"2021-11-07T00:05:45.344708Z","iopub.execute_input":"2021-11-07T00:05:45.344996Z","iopub.status.idle":"2021-11-07T00:05:49.322138Z","shell.execute_reply.started":"2021-11-07T00:05:45.344959Z","shell.execute_reply":"2021-11-07T00:05:49.321156Z"}}
@@ -93,8 +99,10 @@ from utillc import *
 a=1
 utillc._el, utillc._readEL = 0, False
 EKOX(a)
+EKOX(utillc.__file__)
 EKOX(utillc.tempDir)
 
+EKO()
 # %% [code] {"jupyter":{"outputs_hidden":false},"execution":{"iopub.status.busy":"2021-11-07T00:05:50.537071Z","iopub.execute_input":"2021-11-07T00:05:50.537887Z","iopub.status.idle":"2021-11-07T00:05:51.909357Z","shell.execute_reply.started":"2021-11-07T00:05:50.537836Z","shell.execute_reply":"2021-11-07T00:05:51.908679Z"}}
 #dir(utillc)
 #print(utillc.__file__)
@@ -105,7 +113,7 @@ import matplotlib.pyplot as plt
 
 f = scipy.misc.face()
 #plt.imshow(f)
-EKOI(f)
+#EKOI(f)
 
 # %% [code] {"jupyter":{"outputs_hidden":false},"execution":{"iopub.status.busy":"2021-11-07T00:05:51.910661Z","iopub.execute_input":"2021-11-07T00:05:51.910910Z","iopub.status.idle":"2021-11-07T00:05:51.916757Z","shell.execute_reply.started":"2021-11-07T00:05:51.910879Z","shell.execute_reply":"2021-11-07T00:05:51.915868Z"}}
         
@@ -126,12 +134,17 @@ TEST_PATH = os.path.join(input, "test")
 RESNET_MEAN = (0.485, 0.456, 0.406)
 RESNET_STD = (0.229, 0.224, 0.225)
 
+# height width
 # (336, 336)
 IMAGE_RESIZE = (224*2, 224*2)
 #IMAGE_RESIZE = (224, 224)
-
+ones = torch.ones(IMAGE_RESIZE).cuda()
+h,w = IMAGE_RESIZE
+zeros = torch.zeros(size=(1, h, w)).cuda()
 DSIZE = (224, 224)
-DSIZE = (520, 704)
+DSIZE = (704, 520)
+
+
 BORDER= 5
 kernel = np.ones((2, 2), np.uint8) 
 SWEEP = np.arange(0.5, 0.95, 0.05)
@@ -274,6 +287,11 @@ class UNet(nn.Module):
         self.conv_original_size2 = convrelu(64 + 128, 64, 3, 1)
 
         self.conv_last = nn.Conv2d(64, n_class, 1)
+
+        self.conv_last1 = nn.Conv2d(64, 1, 1)
+        self.conv_last2 = nn.Conv2d(64, 1, 1)
+        self.conv_last3 = nn.Conv2d(64, 1, 1)
+        self.conv_last4 = nn.Conv2d(64, 1, 1)
         DD = {
             (224*2, 224*2) :  100352,
             (224, 224) : 25088
@@ -287,6 +305,19 @@ class UNet(nn.Module):
             nn.ReLU(inplace=True),
             nn.Linear(400, 3))
 
+        #assert(n_class == 4)
+        H, W = IMAGE_RESIZE
+        iu,iv = torch.linspace(0, H-1, H) , torch.linspace(0, W-1, W) 
+        u,v = torch.meshgrid(iu, iv)
+        up, left = u / 2 > H/2, v / 2 < W/2
+        down, right = torch.logical_not(up), torch.logical_not(left)
+        r00 = torch.logical_and(left, down).int()
+        r01 = torch.logical_and(left, up).int()
+        r10 = torch.logical_and(right, down).int()
+        r11 = torch.logical_and(right, up).int()
+
+        self.split = True
+        self.tiles = torch.stack(( r00, r01, r10, r11)).unsqueeze(0)
 
         #            nn.ReLU(inplace=True))
 
@@ -327,7 +358,19 @@ class UNet(nn.Module):
         x = self.upsample(x)
         x = torch.cat([x, x_original], dim=1)
         x = self.conv_original_size2(x)
-        out = self.conv_last(x)
+        out1 = self.conv_last1(x)
+        out2 = self.conv_last2(x)
+        out3 = self.conv_last3(x)
+        out4 = self.conv_last3(x)
+        out = torch.cat((out1, out2, out3, out4), dim=1)
+        out = torch.nn.functional.relu(out)
+        """
+        if self.split :
+            # enforce 4 final features pixel wise exclusive
+            if self.tiles.device != out.device :
+                self.tiles = self.tiles.to(out.device)
+            out = out * self.tiles
+        """
         return out, nob, typ
 
 # %% [code] {"jupyter":{"outputs_hidden":false},"execution":{"iopub.status.busy":"2021-11-07T00:05:53.984750Z","iopub.execute_input":"2021-11-07T00:05:53.985231Z","iopub.status.idle":"2021-11-07T00:05:53.991217Z","shell.execute_reply.started":"2021-11-07T00:05:53.985187Z","shell.execute_reply":"2021-11-07T00:05:53.990174Z"}}
@@ -358,12 +401,19 @@ cell_types.index('cort')
 
 # %% [code] {"jupyter":{"outputs_hidden":false},"execution":{"iopub.status.busy":"2021-11-07T00:21:20.411101Z","iopub.execute_input":"2021-11-07T00:21:20.411876Z","iopub.status.idle":"2021-11-07T00:21:20.501134Z","shell.execute_reply.started":"2021-11-07T00:21:20.411808Z","shell.execute_reply":"2021-11-07T00:21:20.500320Z"}}
 
+def getimage(x, nb=0, d=0) :
+    if isinstance(x, torch.Tensor) : x = x.cpu().detach().numpy()
+    x = x[nb,d]
+    x = np.dstack((x,x,x)) * 255
+    x = x.astype(int)
+    return x
+
+
 class Cell :
     def __init__(self, args) :
         self.args = args
         EKOX(args.debug)
         pass
-        self.EPOCHS = 12
         self.PARALLEL=True
         self.BATCH_SIZE=8
         self.SUBSET=99999
@@ -373,6 +423,7 @@ class Cell :
         self.tqdmf = lambda x, total=-1 : x
         self.ERAS=100
         self.EPOCHS = 10
+        #self.EPOCHS = 2
 
         if self.debug :
             self.PARALLEL=True #False
@@ -403,6 +454,7 @@ class Cell :
             Returns numpy array, 1 - mask, 0 - background
 
             '''
+            EKOX(shape)
             s = mask_rle.split()
             starts, lengths = [np.asarray(x, dtype=int) for x in (s[0:][::2], s[1:][::2])]
             starts -= 1
@@ -410,7 +462,9 @@ class Cell :
             img = np.zeros(shape[0] * shape[1], dtype=np.float32)
             for lo, hi in zip(starts, ends):
                 img[lo : hi] = color
-            return img.reshape(shape)
+            res = img.reshape(shape)
+            EKOX(res.shape)
+            return res
 
 
         def extractMasks(mask, dsize=DSIZE, min_size=300 ) :
@@ -458,20 +512,35 @@ class Cell :
             image = cv2.erode(mask, kernel)  
             return image
 
-        def build_masks(df_train, image_id, input_shape, max_weight = 1000000000) :
+        def build_masks(df_train, image_id, input_shape, max_weight = 1000000000, synthetic=[]) :
             height, width = input_shape
             labels = df_train[df_train["id"] == image_id]["annotation"].tolist()
             mask = np.zeros((height, width))
             maskC = np.zeros((height, width))
             maskColors = np.zeros((height, width, 3))
-            for i, label in enumerate(labels) :
-                emask1 = rle_decode(label, shape=(height, width), color=1)
+            contours = np.zeros((height, width))
+
+            emask1s = [  rle_decode(label, shape=(height, width), color=1) for i, label in enumerate(labels)] if len(synthetic) == 0 else synthetic
+
+
+            for i, (label, emask1) in enumerate(zip(labels, emask1s)) :
+                #emask1 = rle_decode(label, shape=(height, width), color=1)
                 if True : #emask1.sum() < max_weight :
+
                     emask = emask1 * (i+1)
                     emask[mask != 0] = 0
                     maskC += emask
                     
                     maskColors += np.dstack((emask1, emask1, emask1)) * colors[i % max_objs]
+
+                    contours1, hierarchy = cv2.findContours(emask1, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+                    cv2.drawContours(contours, contours1, -1, 1, 1)
+                    """
+                    fig = plt.figure()
+                    plt.imshow(emask1)
+                    plt.imshow(contours); 
+                    plt.show()
+                    """
 
                     #EKOX(emask1.sum())
                     """
@@ -514,7 +583,7 @@ class Cell :
             EKOI(np.dstack((img_mag,img_mag,img_mag)).astype(int))
             """
             mask = mask.clip(0, BORDER)
-            return mask, len(labels), maskC, maskColors
+            return mask, len(labels), maskC, maskColors, contours
 
 
         # ## Dataset and Dataloader
@@ -523,15 +592,16 @@ class Cell :
 
 
         class CellDataset(Dataset):
-            def __init__(self, df):
+            def __init__(self, df, top=self):
                 self.df = df
+                self.top = top
                 self.base_path = TRAIN_PATH
-                self.transforms = Compose([Resize(IMAGE_RESIZE[0], IMAGE_RESIZE[1]), 
+                self.transforms = Compose([Resize(IMAGE_RESIZE[0], IMAGE_RESIZE[1], interpolation=cv2.INTER_CUBIC), 
                                            Normalize(mean=RESNET_MEAN, std=RESNET_STD, p=1),  
                                            A.Affine(scale={ "x" : (0.9, 1.1), "y" :  (0.8, 1.2)}, 
                                                     translate_percent=(-0.1, 0.1), 
                                                     rotate=(50, -50), 
-                                                    shear=(10, -10), mode=cv2.BORDER_REFLECT ),
+                                                    shear=(10, -10), mode=cv2.BORDER_REFLECT , interpolation=cv2.INTER_CUBIC),
 
                                            ToTensorV2()])
                 self.gb = self.df.groupby('id')
@@ -541,17 +611,100 @@ class Cell :
                 EKOX(len(self.ltyp))
                 EKOX(self.cell_types)
                 EKOX(len(self.image_ids))
+
             def __getitem__(self, idx):
+
+                outSize = IMAGE_RESIZE
+
                 image_id = self.image_ids[idx]
                 df = self.gb.get_group(image_id)
                 annotations = df['annotation'].tolist()
                 image_path = os.path.join(self.base_path, image_id + ".png")
                 image = cv2.imread(image_path)
+                image = cv2.resize(image, outSize) # width, height
+
+
                 hh, ww, _ = image.shape
-                assert( (hh, ww) == DSIZE)
-                mask, nobjects, maskC, colored = build_masks(df_train, image_id, input_shape=DSIZE)
+                #assert( (hh, ww) == DSIZE)
+                synthetic = []
+
                 """
-                EKOX(TYPE(image))
+                def ff(cum, el) :
+                    EKOX((cum, el))
+                    ncum = cum + el
+                    return ncum
+                EKO()
+                l = [ 1, 2, 3, 4, 5 ]
+                EKOX(list(itertools.accumulate(l, ff)))
+                sys.exit(0)
+                """
+                def objf(cum, i, s) :
+                    """
+                    cum : = 1 where other objects are 
+                    """
+                    h, w, _ = s
+
+                    nsc = np.zeros(s[0:2], np.uint8)
+
+                    cm1 = cum[:,:]
+                    while True:
+                        ns = np.zeros(s, np.uint8)
+                        center = (int(np.random.uniform(0, w)), int(np.random.uniform(0, h)))
+                        l = int(np.random.uniform(w/20, w/5))
+                        ll = l // 10
+                        axes = (l, ll)
+                        angle, startAngle, endAngle  = int(np.random.uniform(0, 360)), 0, 360
+                        color = tuple(map(int, np.random.uniform(100, 200, size=3)))
+                        cv2.ellipse(ns, center, axes, angle, startAngle, endAngle, color=color, thickness=-1)
+                        #kernel = np.ones((5,5),np.float32)/25
+                        #ns = cv2.filter2D(ns,-1,kernel)
+
+                        # ns = 0 et ellipse, nsc = 0
+                        #plt.imshow(ns); plt.show()
+                        if ns[cm1].sum() == 0 : # ellispe does not cover cum
+                            break
+
+                    # ns <= 0 where cum ==1
+                    #ns[cm1] = 0
+
+                    # m = 1 where ellipse remainder
+                    m = ns[:,:,0] > 0
+                    ncum = np.logical_or(cm1, m) # mask cumulated
+                    nsc[m] = 1 # mask for this object
+                    #EKOX(TYPE(nsc))
+                    return ncum, ns, nsc
+
+                if self.top.args.synthetic :
+
+                    ns = np.random.uniform(0, 90, size=image.shape)
+                    nobjs = np.random.uniform(10, 50)
+                    #nobjs = np.random.uniform(2, 4)
+                    cm = white = np.zeros(image.shape[0:2], np.uint8)
+                    synthetic1 = []
+                    for i in range(int(nobjs)) :
+                        cm, ns1, nsc = objf(cm, i, image.shape)
+                        synthetic1.append((ns1, nsc))
+                        #EKOI(ns.astype(int))
+                        #EKOI(np.dstack((nsc,nsc,nsc)) * 255)
+
+
+                    synthetic = [ e[1] for e in synthetic1]
+                    for oi, m in  synthetic1 :
+                        mm = m > 0
+                        ns[mm] += oi[mm]
+                    ns.clip(0, 255)
+                    #EKOI(ns.astype(int))
+                    image = ns
+                    #EKOI(image)
+
+                mask, nobjects, maskC, colored, contours = build_masks(df_train, image_id, input_shape=outSize[::-1], 
+                                                                       synthetic=synthetic)
+
+                """
+                EKOX(len(set(maskC.flatten())))
+                EKOX(nobjects)
+                EKOI(np.dstack((mask,mask, mask)) * 255)
+                #EKOX(TYPE(image))
                 EKOI(colored.astype(int))
                 EKOI(image.astype(int))
                 """
@@ -562,17 +715,29 @@ class Cell :
 
                 mask = (mask >= 1).astype('float32')
                 maskC = maskC.astype('float32')
-                augmented = self.transforms(image=image, masks=[mask, maskC])
+                contours = contours.astype('float32')
+                EKO()
+                plt.imshow(contours); plt.show()
+                EKOX(contours.shape)
+                augmented = self.transforms(image=image, masks=[mask, maskC, contours])
                 image = augmented['image']
-                mask, maskC = augmented['masks']
+                mask, maskC, contours = augmented['masks']
+                EKOX(contours.shape)
                 typ = self.ltyp[idx]
                 typ = self.cell_types.index(typ)
 
+
+                plt.imshow(np.transpose(image, axes=(1,2,0))); plt.show()
+                plt.imshow(mask); plt.show()
+                plt.imshow(contours); plt.show()
+
+
+                contours = contours.reshape((1, IMAGE_RESIZE[0], IMAGE_RESIZE[1]))
                 mask = mask.reshape((1, IMAGE_RESIZE[0], IMAGE_RESIZE[1]))
                 maskC = maskC.reshape((1, IMAGE_RESIZE[0], IMAGE_RESIZE[1]))
                 #cannyi = cannyi.reshape((1, IMAGE_RESIZE[0], IMAGE_RESIZE[1])).astype(float)
 
-                return (image, mask, nobjects, typ, maskC)
+                return (image, mask, nobjects, typ, maskC, contours)
 
             def __len__(self):
                 return len(self.image_ids)
@@ -580,7 +745,7 @@ class Cell :
 
         # In[ ]:
 
-        NClasses = 4
+        NClasses = 2
        
         EKO()
         model = {
@@ -590,7 +755,7 @@ class Cell :
         
 
         ds_train = CellDataset(df_train)
-        image, mask, nobjs, typ, maskC = ds_train[1]
+        image, mask, nobjs, typ, maskC, contours = ds_train[1]
         EKOX((image.shape, mask.shape, typ))
 
 
@@ -637,19 +802,19 @@ class Cell :
 
         optimizer = torch.optim.Adam([ { 'params' : model.parameters(), 'lr':1e-5 }])
 
-        EKOX("loading cpts")
+        EKOX("loading cpts "  + self.args.pts)
         try :
             model.load_state_dict(torch.load(self.args.pts))
             EKOT("cpt loaded successfully")
         except Exception as e :
-            #EKOX(e)
+            EKOX(e)
             EKOX("not loaded")
 
         ious = []
-
+        ccc = []
         EKOT("stats ..")
-
         dl_train = DataLoader(dataset=ds_train, batch_size=self.BATCH_SIZE, num_workers=12, shuffle=False) # pin_memory=True, 
+        EKO()
         for batch in dl_train : 
             model(batch[0].cuda())
             break
@@ -688,7 +853,7 @@ class Cell :
             r = []
             nos = 0
             for batch in self.tqdmf(dl_train) :
-                images, masks, nobjs, typ, maskC = batch
+                images, masks, nobjs, typ, maskC, contours = batch
                 maskC = maskC.cpu().numpy()
                 for j in range(len(images)) :
                     gtmasks,  _ = extractMasks(maskC[j, 0], dsize=DSIZE, min_size=0)
@@ -726,7 +891,7 @@ class Cell :
             n_batches = len(dl_train)
             # get a batch from the dataloader
             batch = next(iter(dl_train))
-            images, masks, nobjs, typ, maskC = batch
+            images, masks, nobjs, typ, maskC, contours = batch
             #EKOX(TYPE(maskC))
 
             def dice_loss(input, target):
@@ -770,7 +935,7 @@ class Cell :
                 iou = inter.sum() / (union.sum() + 1)
                 return iou
 
-            def fff(probability_mask, pnob, nob, dsz, threshold) :
+            def fff(probability_masks, pnob, nob, dsz, threshold, nobatch=1, noimage=1) :
                 #EKOX(TYPE(probability_mask))
                 def fff1(probability_mask, pnob, nob, dsz, threshold) :
                     probability_mask = cv2.resize(probability_mask, dsize=dsz, interpolation=cv2.INTER_LINEAR)
@@ -778,7 +943,10 @@ class Cell :
                     return predictions
                 fff1p = partial(fff1, pnob=pnob, nob=nob, dsz=dsz, threshold=threshold) 
 
-                ll = [ fff1p(pm) for pm in probability_mask]
+                ll = [ fff1p(pm) for pm in probability_masks]
+                if (nobatch == 0 and noimage==0) :
+                    EKOX([ len(e) for e in ll])
+                    
                 pms = [ x for pred in ll for x in pred]
                 d1 = np.abs(len(pms) - nob.detach().cpu().numpy())
                 d2 = np.abs(nob.cpu().numpy() - pnob.detach().cpu().numpy())
@@ -789,171 +957,284 @@ class Cell :
 
             if self.args.model == "deeplab" :
                 criterion = torch.nn.BCELoss()
+
             bce = torch.nn.BCEWithLogitsLoss()
-            model.train()
-
-            for epoch in range(1, self.EPOCHS + 1):
-                EKOT(f"Starting epoch:  {epoch} / {self.EPOCHS}")
-                #EKOX((era, self.ERAS))
-                running_loss = 0.0
-                running_loss2 = 0.0
-                running_loss_bce = 0.0
-                optimizer.zero_grad()
-
-                for batch_idx, batch in self.tqdmf(enumerate(dl_train), total=len(dl_train)):
-                    # Predict
-                    images, masks, nobjs, typ, masksC = batch
-                    images, masks, nobjs, typ, masksC = images.cuda(),  masks.cuda(), nobjs.cuda().float(), typ.cuda(), masksC.cuda()
-
-                    #nobjs = nobjs.log() / 6 # pour rammener ce nombre entre 0 et 1
-                    nobjs = (nobjs - meanNobjs) / stdNobjs
-                    masks = masks # .round().long()
-
-                    B, C, H, W = masks.shape
-
-                    try :
-                        outputs, pnobjs, ptyp = model(images)
-                        #pnob = torch.clamp(pnob, 0, 10).T
-                        #outputs = outputs.view(self.BATCH_SIZE, -1)
-                        #masks = masks.view(self.BATCH_SIZE, -1)
-                        pnobjs = (pnobjs * stdNobjs) + meanNobjs
-                        """
-                        loss1 = criterion(outputs, masks)
-                        loss2 = nn.functional.l1_loss(pnob, nobjs)
-                        loss_bce = bce(outputs, masks)
-                        #EKOX((ptyp, typ))
-                        loss3 = 0 #nn.functional.cross_entropy(ptyp, typ)
-
-                        #EKOX(loss1.item())
-                        #EKOX(loss2.item())
-                        #EKOX(loss3.item())
-                        
-                        loss = loss1 + loss2 + loss3
-                        """
-                        #n, bins, patches = plt.hist(cannyi.cpu().numpy().flatten()); plt.show()
-                        #pcanny = canny(outputs)[0]
-                        #EKOX(outputs)
-                        #EKOX(pcanny)
-                        #EKOX(TYPE(outputs))
-
-                        # fuse the channels
-                        outputs1 = outputs.sum(dim=1, keepdim=True) #
-                        #EKOX(TYPE(outputs1))
-                        #EKOX(TYPE(masks))
+            mae = torch.nn.L1Loss()
 
 
-                        if era >= 9999 :
-                            preds = torch.sigmoid(outputs)
-                            EKOX(TYPE(preds))
-                            pnobjs = pnobjs[:,0]
-                            #EKOX(pnobjs.T.detach().cpu().numpy())                
-                            #pnobjs = (pnobjs * 6).exp() # inversion de la normalization
-                            pnobjs = (pnobjs * stdNobjs) + meanNobjs
-                            for jnoimage in range(B) :
-                                masksCnp = masksC.cpu().numpy()
-                                gtmasks,  _ = extractMasks(masksCnp[jnoimage, 0], dsize=DSIZE, min_size=1)
-                                EKOX(len(gtmasks))
-                                EKOX(TYPE(gtmasks))
-                                B, C, _, _ = preds.shape
-                                preds1 = preds.detach().cpu().numpy()
-                                ll = []
-                                for nc in range(C):
-                                    preds2 = preds1[jnoimage, nc]
-                                    _, _, pmasks = fff(preds2, pnobjs[jnoimage], nobjs[jnoimage], dsz=DSIZE, threshold=0.5)
-                                    EKOX(TYPE(pmasks))
-                                    ll += [ (nc, ip, ig, iouf(p,g)) for ip, p in enumerate(pmasks) for ig, g in enumerated(gtmasks) ]
-                                EKO()
-                                #mat = np.zeros((len(gtmasks), C * len(
+            def trainEpochs() :
+                model.train()
+                for epoch in range(1, self.EPOCHS + 1):
+                    EKOT(f"Starting epoch:  {epoch} / {self.EPOCHS}")
+                    #EKOX((era, self.ERAS))
+                    running_loss = 0.0
+                    running_loss_sup = 0.0
+                    running_loss_bce = 0.0
+                    running_loss_mae = 0.0
+                    running_loss_iou = 0.0
+                    running_loss_equi = 0.0
+                    running_loss_contours = 0.0
 
+                    for batch_idx, batch in self.tqdmf(enumerate(dl_train), total=len(dl_train)):
 
-                        # fused mask == gt
-                        loss1 =  bce(outputs1, masks)
-
-                        # superposition minimal
-                        loss2 =  outputs.prod(dim=1).abs().mean()
-                        
-                        # maximize spatial variance
-                        ps = outputs.sum(dim=(2,3))
-                        vrnc = torch.var(outputs, dim=(2,3)).sqrt().mean() / 10 # H / W
-                        loss3 = - vrnc
-                        
-                        # minimize mean over the classes bitplanes : cell equi distributed
-                        mn = torch.mean(outputs, dim=(2,3))
-                        vmn = torch.var(mn).sqrt().mean()
-                        loss4 = vmn
-
-
-
-
-                        #loss =  bce(pcanny, cannyi)
-                        loss = loss1 + loss2 + loss3 + loss4
-                        #EKOX((loss1.item(), loss2.item(), loss3.item(), loss4.item(), loss.item()))
-                        # Back prop
-                        loss.backward()
-                        optimizer.step()
                         optimizer.zero_grad()
-                        running_loss += loss.item()
-                        #running_loss2 += loss2.item()
-                        #running_loss_bce += loss_bce.item()
-                    except Exception as e  :
-                        EKOX(e)
-                        if self.debug : raise(e)
-                        pass
-                epoch_loss = running_loss / n_batches
-                EKOT(f"Epoch: {epoch} - Train Loss {epoch_loss:.4f}")
-                EKOX(running_loss2 / n_batches)
-                EKOX(running_loss_bce / n_batches)
-                losses.append( epoch_loss)
-                losses_bce.append( running_loss_bce / n_batches)
-            EKOT("saving")
-            torch.save(model.state_dict(), self.args.pts)
-            #EKO()
-            
-            model.eval()
 
-            def getimage(x, nb=0) :
-                if isinstance(x, torch.Tensor) : x = x.cpu().detach().numpy()
-                x = x[nb,0]
-                x = np.dstack((x,x,x)) * 255
-                x = x.astype(int)
-                return x
+                        # images, mask binaire one bitplane, num objs, typ of image, mask color indexed 
+                        images, masks, nobjs, typ, masksC, contours = batch
+                        images, masks, nobjs, typ, masksC, contours = images.cuda(),  masks.cuda(), nobjs.cuda().float(), typ.cuda(), masksC.cuda(), contours.cuda()
+
+                        #nobjs = nobjs.log() / 6 # pour rammener ce nombre entre 0 et 1
+                        nobjs = (nobjs - meanNobjs) / stdNobjs
+                        masks = masks # .round().long()
+
+                        B, C, H, W = masks.shape
+
+                        try :
+                            def compute() :
+                                outputs, pnobjs, ptyp = model(images)
+                                #pnob = torch.clamp(pnob, 0, 10).T
+                                #outputs = outputs.view(self.BATCH_SIZE, -1)
+                                #masks = masks.view(self.BATCH_SIZE, -1)
+                                pnobjs = (pnobjs * stdNobjs) + meanNobjs
+                                """
+                                loss1 = criterion(outputs, masks)
+                                loss2 = nn.functional.l1_loss(pnob, nobjs)
+                                loss_bce = bce(outputs, masks)
+                                #EKOX((ptyp, typ))
+                                loss3 = 0 #nn.functional.cross_entropy(ptyp, typ)
+
+                                #EKOX(loss1.item())
+                                #EKOX(loss2.item())
+                                #EKOX(loss3.item())
+
+                                loss = loss1 + loss2 + loss3
+                                """
+                                #n, bins, patches = plt.hist(cannyi.cpu().numpy().flatten()); plt.show()
+                                #pcanny = canny(outputs)[0]
+                                #EKOX(outputs)
+                                #EKOX(pcanny)
+                                #EKOX(TYPE(outputs))
+
+                                # fuse the channels
+                                outputs1 = outputs.sum(dim=1, keepdim=True) #
+                                #EKOX(TYPE(outputs1))
+                                #EKOX(TYPE(masks))
+
+
+                                if era >= 9999 :
+                                    preds = torch.sigmoid(outputs)
+                                    EKOX(TYPE(preds))
+                                    pnobjs = pnobjs[:,0]
+                                    #EKOX(pnobjs.T.detach().cpu().numpy())                
+                                    #pnobjs = (pnobjs * 6).exp() # inversion de la normalization
+                                    pnobjs = (pnobjs * stdNobjs) + meanNobjs
+                                    for jnoimage in range(B) :
+                                        masksCnp = masksC.cpu().numpy()
+                                        gtmasks,  _ = extractMasks(masksCnp[jnoimage, 0], dsize=DSIZE, min_size=1)
+                                        EKOX(len(gtmasks))
+                                        EKOX(TYPE(gtmasks))
+                                        B, C, _, _ = preds.shape
+                                        preds1 = preds.detach().cpu().numpy()
+                                        ll = []
+                                        for nc in range(C):
+                                            preds2 = preds1[jnoimage, nc]
+                                            _, _, pmasks = fff(preds2, pnobjs[jnoimage], nobjs[jnoimage], dsz=DSIZE, threshold=0.5)
+                                            EKOX(TYPE(pmasks))
+                                            ll += [ (nc, ip, ig, iouf(p,g)) for ip, p in enumerate(pmasks) for ig, g in enumerated(gtmasks) ]
+                                        EKO()
+                                        #mat = np.zeros((len(gtmasks), C * len(
+
+                                """
+                                a,b = np.arange(0,1,0.01), np.arange(0,1,0.01)
+                                av, bv = np.meshgrid(a,b)
+                                plt.imshow(np.abs(av-bv) / np.(av+bv)); plt.show()
+                                """
+
+
+                                def same(av, bv) : # a ~= b => 1, 0 otherwise
+                                    # assume a, b in [0, 1]
+                                    #return 1. - np.abs(av-bv) / np.sqrt(av+bv))
+                                    return 1. - (av-bv).abs() / torch.max(av,bv)
+
+
+                                def mmatch(o, p) : # object a is contained in map p => 1
+                                    # shape : HxW
+                                    # assuming pix=1 : object
+                                    a, b = (o * p).sum(), o.sum()
+                                    a, b = a / H / W, b / H / W
+                                    return same(a, b)
+
+                                loss_bce = tz
+                                loss_mae = tz
+                                # fused mask == gt
+                                #loss_bce =  bce(outputs1, masks)
+                                #EKOX(outputs1.shape)
+                                predMasks = outputs[:,0:1,:,:]
+                                predContours = outputs[:,1:2,:,:]
+
+                                loss_bce =  bce(predMasks, masks)
+                                loss_contours =  bce(predContours, contours)
+                                loss_iou =  iouf(predMasks, masks)
+                                loss_dice =  iouf(predMasks, masks)
+
+                                # superposition minimal
+                                #loss_sup =  torch.maximum(outputs.sum(dim=1) - 1, zeros).mean() * 10 #.prod(dim=1).mean()
+
+
+                                gt = lambda x, tth : torch.nn.functional.sigmoid((x - tth) * 50)
+
+                                gt = gt(outputs[0], 0.1)
+                                loss_sup = torch.maximum(torch.sum(gt, dim=0) - 1, zeros).mean()
+
+                                # maximize spatial variance
+                                ps = outputs.sum(dim=(2,3))
+                                vrnc = torch.var(outputs, dim=(2,3)).sqrt().mean() / 10 # H / W
+                                loss_spatial = - vrnc
+
+                                # minimize mean variance over the classes bitplanes : cell equi distributed
+                                mn = torch.mean(outputs, dim=(2,3))
+                                #vmn = torch.var(mn, dim=1).sqrt().mean() * 10
+                                #loss_equi = vmn
+                                mn, mx = mn.min(dim=1).values, mn.max(dim=1).values
+                                #EKOX(mn)
+                                loss_equi = (mx - mn).mean() / 10
+                                #a, b, c, d = mn[:,0], mn[:,1], mn[:,2], mn[:,3] 
+                                #loss_equi = (a-b).abs() + (b-c).abs() + (c-d).abs() + (a-d).abs() + (a-c).abs() + (c-b).abs()
+                                #loss_equi = loss_equi.mean()
+
+                                #EKOX(loss_sup)
+                                #EKOX(loss_equi)
+                                #EKOX(loss_bce)
+
+                                #loss =  bce(pcanny, cannyi)
+                                return loss_mae, loss_iou, loss_dice, loss_spatial, loss_equi, loss_sup, loss_bce, loss_contours
+                            optimizer.zero_grad(); 
+                            loss_mae, loss_iou, loss_dice, loss_spatial, loss_equi, loss_sup, loss_bce = compute()
+                            loss_bce.backward()
+                            EKOX(loss_bce)
+                            g, ave, maxs = checkGradient(optimizer)
+                            EKOP(ave)
+                            EKOP(maxs)
+                            EKOX(TYPE(g))
+                            """
+
+                            optimizer.zero_grad(); 
+                            loss_mae, loss_iou, loss_dice, loss_spatial, loss_equi, loss_sup, loss_bce = compute()
+                            EKOX(loss_sup)
+                            loss_sup.backward()
+                            g, ave, maxs = checkGradient(optimizer)
+                            EKOX(TYPE(g))
+                            EKOP(ave)
+                            """
+
+                            """
+                            optimizer.zero_grad(); 
+                            loss_mae, loss_iou, loss_dice, loss_spatial, loss_equi, loss_sup, loss_bce = compute()
+                            EKOX(loss_equi)
+                            loss_equi.backward()
+                            g, ave, maxs = checkGradient(optimizer)
+                            EKOX(TYPE(g))
+                            EKOP(ave)
+
+
+
+                            optimizer.zero_grad(); 
+                            loss_mae, loss_iou, loss_dice, loss_spatial, loss_equi, loss_sup, loss_bce = compute()
+                            EKOX(loss_sup)
+                            (loss_sup * 10).backward()
+                            g, ave, maxs = checkGradient(optimizer)
+                            EKOX(TYPE(g))
+                            EKOP(ave)
+                            """
+                            optimizer.zero_grad(); 
+                            loss_mae, loss_iou, loss_dice, loss_spatial, loss_equi, loss_sup, loss_bce, loss_contours = compute()
+                            loss = loss_mae + loss_contours #+ loss_equi * 10  + loss_sup * 10
+                            #EKOX(loss)
+
+                            #EKOX(batch_idx)
+                            #if batch_idx == 12 :  pdb.set_trace()
+
+                            #EKOX(loss_sup)
+                            loss.backward()
+                            #g, ave, maxs = checkGradient(optimizer)
+                            #EKOX(TYPE(g))
+                            #EKOP(ave)
+
+                            if era > 111111 :
+                                #loss += loss_sup  + loss_equi #loss_spatial 
+                                loss += loss_equi * 10  + loss_sup #loss_spatial 
+                            #EKOX((loss1.item(), loss2.item(), loss3.item(), loss4.item(), loss.item()))
+                            # Back prop
+                            #loss.backward()
+
+                            optimizer.step()
+                            optimizer.zero_grad()
+                            running_loss += loss.item()
+                            running_loss_equi += loss_equi.item()
+                            running_loss_sup += loss_sup.item()
+                            running_loss_mae += loss_mae.item()
+                            running_loss_contours += loss_contours.item()
+                            running_loss_iou += loss_iou.item()
+                            running_loss_bce += loss_bce.item()
+
+                            ccc.append((loss.item(), loss_equi.item(), loss_sup.item(), loss_mae.item(), 
+                                        loss_iou.item(), loss_bce.item(), loss_contours.item()))
+
+
+                        except Exception as e  :
+                            EKOX(e)
+                            raise(e) 
+                            if self.debug : raise(e)
+                            pass
+                    epoch_loss = running_loss / n_batches
+                    EKOT(f"Epoch: {epoch} - Train Loss {epoch_loss:.4f}")
+                    EKOX((era, epoch))
+                    EKOX(running_loss_equi / n_batches)
+                    EKOX(running_loss_sup / n_batches)
+                    EKOX(running_loss_bce / n_batches)
+                    EKOX(running_loss_contours / n_batches)
+                    EKOX(running_loss_mae / n_batches)
+                    EKOX(running_loss_iou / n_batches)
+                    EKOX(running_loss / n_batches)
+                    EKOP(np.asarray(ccc), labels = ["loss", "equi", "sup", "mae", "iou", "bce", "contours"])
+                    losses.append( epoch_loss)
+                    losses_bce.append( running_loss_bce / n_batches)
+                EKOT(("saving in " + self.args.pts))
+                torch.save(model.state_dict(), self.args.pts)
+                #EKO()
 
             # ## Postprocessing: separate different components of the prediction mask
 
 
             def fbatch(inobatch, batch, th=0.5, threshold=0.5) :
-                images, masks, nobjs, typ, masksC = batch
+                images, masks, nobjs, typ, masksC, contours = batch
 
                 b_size, _, _, _ =  images.shape
 
-                preds, pnobjs, typ = model(images.cuda())
+                predsO, pnobjs, typ = model(images.cuda())
                 pnobjs = pnobjs[:,0]
-                preds = torch.sigmoid(preds)
+                predsS = torch.sigmoid(predsO)
                 #EKOX(pnobjs.T.detach().cpu().numpy())                
                 #pnobjs = (pnobjs * 6).exp() # inversion de la normalization
                 pnobjs = (pnobjs * stdNobjs) + meanNobjs
-                predsP = preds.detach().cpu().numpy() # (batch_size, 1, size, size) -> (batch_size, size, size)
+                predsP = predsS.detach().cpu().numpy() # (batch_size, 1, size, size) -> (batch_size, size, size)
                 """
                 dd = preds.flatten()
                 n, bins, patches = plt.hist(dd, 128, facecolor='blue', alpha=0.5); plt.show()
                 dd = masks.cpu().numpy().flatten()
                 n, bins, patches = plt.hist(dd, 128, facecolor='blue', alpha=0.5); plt.show()
                 """
+                masksT = masks.cuda()
                 masks = masks.cpu().numpy()
                 masksC = masksC.cpu().numpy()
-
-                preds1 = preds #torch.sigmoid(preds)
+                contours = contours.cpu().numpy()
+                preds1 = predsS #torch.sigmoid(preds)
                 #EKOX(TYPE(preds1))
                 preds1 = preds1.detach().cpu().numpy()[:, :, :, :] # (batch_size, 1, size, size) -> (batch_size, size, size)
-                
                 _dsize = (224, 224)
-
                 _dsize = DSIZE
-
-
-                fffp = partial(fff, dsz = _dsize, threshold=threshold) 
-
-                ppp1 = [ fffp(*e) for e in zip(preds1, pnobjs, nobjs)]
+                fffp = partial(fff, dsz = _dsize, threshold=threshold, nobatch = inobatch) 
+                ppp1 = [ fffp(*e, noimage=i) for i, e in enumerate(zip(preds1, pnobjs, nobjs)) ]
                 ppp = [ (e[0], e[1]) for e in ppp1]
                 ppp = np.asarray(ppp)
                 #EKOX(TYPE(ppp))
@@ -1036,10 +1317,11 @@ class Cell :
                             #EKOX(TYPE(gtmasks))
                             #EKOX(TYPE(pmasks))
                             
-                            EKOI(getColored(gtmasks.cpu().numpy()))
+                            #EKOI(getColored(gtmasks.cpu().numpy()))
 
                             if len(pmasks) > 0 :
-                                EKOI(getColored(pmasks.cpu().numpy()))
+                                #EKOI(getColored(pmasks.cpu().numpy()))
+                                pass
 
                         p = 1 if len(gtmasks) == 0 else tp / (tp + fp + fn)
                         return p
@@ -1057,8 +1339,29 @@ class Cell :
                 #EKOX([ cnob(probability_mask) for probability_mask in masks[:,0,:,:]])
                 #EKOX(nobjs.T)
                 if inobatch == 0 : 
+                    # preds : sigmoid + threshold
+                    outputs = predsO
+                    EKOX(TYPE(torch.sum(outputs[0], dim=0).cpu().detach().numpy()))
+                    loss_sup =  torch.maximum(torch.sum(outputs[0], dim=0) - 1, zeros).mean() #.prod(dim=1).mean()
+                    EKOX(loss_sup)
+                    gt = torch.gt(outputs[0], 0.2)
+                    gt = torch.maximum(torch.sum(gt, dim=0) - 1, zeros).mean()
+                    EKOX(gt)
+
+                    outputs1 = outputs.sum(dim=1, keepdim=True)
+                    loss_mae =  mae(outputs1[0], masksT[0])
+                    EKOX(loss_mae)
+
+
+                    EKOX(TYPE(torch.sum(outputs[0], dim=0).detach().cpu().numpy()))
                     EKOX(TYPE(ppp1[0][2]))
                     EKOX(TYPE(getimage(masks)))
+                    EKOX(TYPE(preds))
+
+                    np.save("out_%d.npy" % era, outputs[0].cpu().detach().numpy())
+                    np.save("images_%d.npy" % era, images[0].cpu().detach().numpy())
+                    np.save("masks_%d.npy" % era, masks[0])
+
                     ii = np.hstack((
                         (images[0].permute((1,2,0)).detach().cpu().numpy() * 255).astype(int),
                         getimage(masks),
@@ -1067,6 +1370,8 @@ class Cell :
                         getimage(preds4),
                         getimage(inter),
                         getimage(union)))
+                    EKOI(getimage(preds, 0, 0))
+                    EKOI(getimage(preds, 0, 1))
                     EKOI(ii)
                     EKOX(batchprecfs[0][1])
                     EKOX(avprec[0])
@@ -1076,14 +1381,21 @@ class Cell :
                 rr = np.asarray((iou, nono, ppp[:,0], avprec))
                 return rr
 
-            for thld in [ 0.4, 0.5, 0.6 ] :
-                EKOX(thld)
-                lflf = [ fbatch(i, batch, threshold=thld) for i, batch in enumerate(self.tqdmf(dl_val))]
-                lflf = np.hstack(lflf)
-                EKOT("iou, #objs pred error, #nmb actual seg error")
-                res = np.mean(lflf, axis=1) 
-                EKOX((thld, res))
-            scores.append(res[3])
+            
+            def validate() :
+                model.eval()
+                EKOT("Testing on val set with th= 0.4 ...")
+                for thld in [ 0.4, 0.5, 0.6 ] :
+                    EKOX(thld)
+                    lflf = [ fbatch(i, batch, threshold=thld) for i, batch in enumerate(self.tqdmf(dl_val))]
+                    lflf = np.hstack(lflf)
+                    EKOT("iou, #objs pred error, #nmb actual seg error")
+                    res = np.mean(lflf, axis=1) 
+                    EKOX((thld, res))
+                scores.append(res[3])
+
+            trainEpochs()
+            validate()
 
             with open("losses.txt", "w") as fd :  fd.write('\n'.join([str(e) for e in losses]))
             with open("losses_bce.txt", "w") as fd :  fd.write('\n'.join([ str(e) for e in losses_bce]))
@@ -1193,14 +1505,20 @@ class Cell :
 
 if __name__ == "__main__":
 
+
+    EKOX(TYPE(np.random.uniform(0, 255, (12, 3))))
+
+
     parser = argparse.ArgumentParser()
     parser.add_argument('--predict', type=str, default="")
     parser.add_argument('--debug', type=Bool, default=False)
     parser.add_argument('--model', default="unet")
+    parser.add_argument('--synthetic', type=Bool, default=False)
     parser.add_argument('--pts', default="model.pts")
     parser.add_argument('-f')
     args = parser.parse_known_args()[0]
     EKOX(args)
+
     fs = Cell(args)
     if True : #with autograd.detect_anomaly():
         fs.run()

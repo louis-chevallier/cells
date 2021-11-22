@@ -20,9 +20,8 @@ FACELAB_LOG_LEVEL?=INFO
 export DATA_FOLDER?=/home/wp24b
 
 GGPU?=0,1
-DEBUG=False
+DEBUG=True
 MODEL?=deeplab
-
 
 
 startD : 
@@ -31,7 +30,7 @@ startD :
 start : 
 	ssh -X -q D9468.Idcc.lab -l chevallierl "cd $$PWD; DEBUG=True MODEL=unet make start1"
 
-TARGET=cell
+TARGET=train
 
 start1 :
 	hostname
@@ -40,12 +39,34 @@ start1 :
 
 PREF=$(PWD)/../../validation/grand_test/facelab2
 
-cell : kill
+cclean :
+	rm -f /home/wp01/tmp/images/*.png
+	rm -f *.trc
+
+
+metric : 
+	CVD=$(GGPU) CUDA_VISIBLE_DEVICES=$(GGPU)  $(SET) python metric.py 
+
+#PTS=$(DATE).pts
+PTS=m1.pts
+
+#-m pdb
+
+cell : kill cclean
 	hostname
-	CVD=$(GGPU) CUDA_VISIBLE_DEVICES=$(GGPU)  $(SET) python cell13.py --debug $(DEBUG) --pts $(DATE).pts --model $(MODEL) 2>&1 | tee $(@)_$(DATE).trc
+	CVD=$(GGPU) CUDA_VISIBLE_DEVICES=$(GGPU)  $(SET) python  cell13.py --debug $(DEBUG) --pts $(PTS) --synthetic True --model $(MODEL) 2>&1 | tee $(@)_$(DATE).trc
+
+train : kill cclean
+	hostname
+	CVD=$(GGPU) NUMEXPR_MAX_THREADS=2 CUDA_VISIBLE_DEVICES=$(GGPU)  $(SET) python  training.py 2>&1 | tee $(@)_$(DATE).trc
+
+
+prepdata : 
+	CVD=$(GGPU) CUDA_VISIBLE_DEVICES=$(GGPU)  $(SET) python  tojson.py
+
 
 kill :
-	-source ~/.bashrc; spy; terminate train_face_seg; sleep 5 
+	-source ~/.bashrc; spy; terminate training; terminate cell13; sleep 5 
 
 
 submit :

@@ -7,6 +7,15 @@ function myhome() {
     echo $ret
 }
 
+function testtorch() {
+    python -c "
+from pylab import *; 
+import numpy as np, matplotlib as plt, sys; 
+import torch; 
+print(torch.__version__)
+"
+}
+
 function buildtheenv() {
     source buildenv.sh
     #set -vx
@@ -35,7 +44,7 @@ function buildtheenv() {
         python --version
 
         conda install -y python=3.8.8
-        conda install -y -c pytorch pytorch torchvision cudatoolkit=${CUDA_VERSION_}
+        conda install -y -c pytorch pytorch=1.8 torchvision=0.9.1 cudatoolkit=${CUDA_VERSION_}
         conda install -y -c conda-forge -c fvcore -c iopath fvcore iopath
         conda install -y -c anaconda scikit-learn
         conda install -y matplotlib
@@ -47,7 +56,7 @@ function buildtheenv() {
         pip install tensorboard pycocotools
 
 
-        conda install -y -c pytorch torchvision
+        #conda install -y -c pytorch torchvision
         #conda install -y -c conda-forge opencv
         pip install opencv-python
         pip install chumpy
@@ -60,11 +69,15 @@ function buildtheenv() {
         pip install torchsummary
         pip install albumentations 
         pip install torchscan
-        pip install kaggle-cli
+        #pip install kaggle-cli
         pip install git+https://github.com/kornia/kornia
-
+        #conda install -c conda-forge detectron2
+        #python -m pip install detectron2 -f https://dl.fbaipublicfiles.com/detectron2/wheels/cu101/torch1.8/index.html
+        #python -m pip install 'git+https://github.com/facebookresearch/detectron2.git'
+        python -m pip install detectron2 -f https://dl.fbaipublicfiles.com/detectron2/wheels/cu101/torch1.8/index.html
      fi
     #cuda92
     PATH=${ANA}/bin:${PATH}
     #set +vx
+    testtorch
 }
